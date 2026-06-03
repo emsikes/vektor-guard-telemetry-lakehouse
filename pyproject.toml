@@ -1,0 +1,139 @@
+# ----------------------------------------------------------------------------
+# Vektor-Guard runtime package - Python project metadata.
+#
+# Modern PEP 621 declarative config. Single source of truth for dependencies,
+# entry points, build configuration. Replaces setup.py, requirements*.txt,
+# and setup.cfg.
+# ----------------------------------------------------------------------------
+
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vektor-guard-runtime"
+version = "0.1.0"
+description = "Runtime services for the Vektor-Guard telemetry lakehouse"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.13"
+authors = [
+    { name = "Matt Sikes", email = "matt@theinferenceloop.com" },
+]
+keywords = ["ai-security", "prompt-injection", "lakehouse", "ml-ops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core runtime dependencies - what all services need
+dependencies = [
+    "pydantic>=2.7,<3",
+    "structlog>=24.1",
+    "boto3>=1.35",
+    "httpx>=0.27",
+]
+
+# Optional dependency groups - install with `pip install ".[fastapi]"` etc.
+[project.optional-dependencies]
+# FastAPI inference endpoint
+fastapi = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "transformers>=4.45",
+    "torch>=2.4",
+    "prometheus-client>=0.20",
+]
+
+# Sync agent - pushes JSON files to UC volume
+sync = [
+    "databricks-sdk>=0.30",
+    "watchdog>=4.0",
+]
+
+# Replay agent - reads HuggingFace corpus and POSTs to FastAPI
+replay = [
+    "datasets>=3.0",
+]
+
+# Judge worker - dual-LLM verdict
+judge = [
+    "anthropic>=0.40",
+    "openai>=1.50",
+]
+
+# Synthetic generator - reuses judge LLM clients
+synthetic = [
+    "anthropic>=0.40",
+    "openai>=1.50",
+]
+
+# Everything needed to run the full runtime
+runtime = [
+    "vektor-guard-runtime[fastapi,sync,replay,judge,synthetic]",
+]
+
+# Development extras - tests, linting, type checking
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-requests",
+]
+
+# Command-line entry points - each service is a script after `pip install .`
+[project.scripts]
+vektor-guard-fastapi = "vektor_guard_runtime.fastapi_app:main"
+vektor-guard-sync = "vektor_guard_runtime.sync_agent:main"
+vektor-guard-replay = "vektor_guard_runtime.replay_agent:main"
+vektor-guard-judge = "vektor_guard_runtime.judge_worker:main"
+vektor-guard-synthetic = "vektor_guard_runtime.synthetic_generator:main"
+
+# Hatchling configuration - tell it the package lives in src/
+[tool.hatch.build.targets.wheel]
+packages = ["src/vektor_guard_runtime"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "README.md",
+    "LICENSE",
+]
+
+# Ruff configuration - linter + formatter
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "RUF", # ruff-specific
+]
+
+# Mypy configuration - strict typing for the runtime package
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["transformers.*", "torch.*", "datasets.*"]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
