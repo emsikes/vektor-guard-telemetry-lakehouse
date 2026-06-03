@@ -1,0 +1,52 @@
+# ----------------------------------------------------------------------------
+# Vektor-Guard runtime container - multi-stage build for ARM64 (Graviton).
+#
+# Stage 1 (builder): installs build deps, compiles wheels for the project
+#                    and all runtime extras.
+# Stage 2 (runtime): minimal slim base, copies the venv from the builder.
+#
+# All five services share this single image. Differentiation happens at
+# docker-compose time via the entry point script per service.
+# ----------------------------------------------------------------------------
+# --- Builder stage ----------------------------------------------------------
+FROM python:3.13-slim AS builder
+
+# Build time deps for any C-extension wheels we need
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a venv at /opt/venv so we can copy it cleanly to the runtime stage
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install the package with the [runtime] extra (all five services)
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://pypi.org/simple \
+        ".[runtime]"
+
+# --- Runtime stage ----------------------------------------------------------
+FROM python:3.13-slim AS runtime
+
+# --- Runtime only deps - kept minimal
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Copy the prebuilt venv from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# --- Non-root user for the runtime
+RUN useradd --create-home --shell /bin/bash --uid 1000 runtime
+USER runtime
+WORKDIR /home/runtime
+
+# --- Default to FastAPI - docker-compose overrides this per service
+CMD ["vektor-guard-fastapi"]

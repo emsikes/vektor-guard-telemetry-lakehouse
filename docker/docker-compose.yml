@@ -1,0 +1,118 @@
+# ---------------------------------------------------------------------------
+# Vektor-Guard runtime services - docker-compose orchestration.
+#
+# Five services on a private network, sharing one image.
+# fastapi + sync + judge run continuously; replay + synthetic are
+# on-demand (started via `docker compose --profile on-demand up`).
+#
+# Shared volume `event-drop` carries JSON files from FastAPI's rolling
+# sink to the sync agent's UC volume ship-out.
+# ---------------------------------------------------------------------------
+
+services:
+  fastapi:
+    image: vektor-guard-runtime:latest
+    container_name: vektor-guard-fastapi
+    command: ["vektor-guard-fastapi"]
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
+      EVENT_DROP_DIR: /var/run/vektor-guard/events
+      MODEL_NAME: theinferenceloop/vektor-guard-v2
+    ports:
+      - "8000:8000"
+    volumes:
+      - event-drop:/var/run/vektor-guard/events
+      - ${HOME}/.aws:/home/runtime/.aws:ro
+    networks:
+      - runtime
+
+  sync:
+    image: vektor-guard-runtime:latest
+    container_name: vektor-guard-sync
+    command: ["vektor-guard-sync"]
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
+      EVENT_DROP_DIR: /var/run/vektor-guard/events
+      DATABRICKS_VOLUME_PATH: /Volumes/vektor_guard_dp/bronze/landing
+      DATABRICKS_PAT_SECRET_ID: vektor-guard-dp-dev/databricks-pat
+      DATABRICKS_WORKSPACE_URL_PARAM: /vektor-guard-dp-dev/databricks/workspace-url
+    volumes:
+      - event-drop:/var/run/vektor-guard/events
+      - ${HOME}/.aws:/home/runtime/.aws:ro
+    networks:
+      - runtime
+    depends_on:
+      - fastapi
+
+  judge:
+    image: vektor-guard-runtime:latest
+    container_name: vektor-guard-judge
+    command: ["vektor-guard-judge"]
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
+      DATABRICKS_PAT_SECRET_ID: vektor-guard-dp-dev/databricks-pat
+      DATABRICKS_WORKSPACE_URL_PARAM: /vektor-guard-dp-dev/databricks/workspace-url
+      ANTHROPIC_API_KEY_SECRET_ID: vektor-guard-dp-dev/anthropic-api-key
+      OPENAI_API_KEY_SECRET_ID: vektor-guard-dp-dev/openai-api-key
+      JUDGE_POLL_INTERVAL_SECONDS: ${JUDGE_POLL_INTERVAL_SECONDS:-30}
+    volumes:
+      - ${HOME}/.aws:/home/runtime/.aws:ro
+    networks:
+      - runtime
+    depends_on:
+      - sync
+
+  replay:
+    image: vektor-guard-runtime:latest
+    container_name: vektor-guard-replay
+    command: ["vektor-guard-replay"]
+    profiles: ["on-demand"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
+      FASTAPI_URL: http://fastapi:8000
+      REPLAY_DATASET_ID_PARAM: /vektor-guard-dp-dev/replay/dataset-id
+    volumes:
+      - ${HOME}/.aws:/home/runtime/.aws:ro
+    networks:
+      - runtime
+    depends_on:
+      - fastapi
+
+  synthetic:
+    image: vektor-guard-runtime:latest
+    container_name: vektor-guard-synthetic
+    command: ["vektor-guard-synthetic"]
+    profiles: ["on-demand"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AWS_REGION: ${AWS_REGION:-us-west-2}
+      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
+      FASTAPI_URL: http://fastapi:8000
+      ANTHROPIC_API_KEY_SECRET_ID: vektor-guard-dp-dev/anthropic-api-key
+      OPENAI_API_KEY_SECRET_ID: vektor-guard-dp-dev/openai-api-key
+      SYNTHETIC_RATE_PARAM: /vektor-guard-dp-dev/synthetic/default-rate-per-minute
+      SYNTHETIC_COST_CAP_PARAM: /vektor-guard-dp-dev/synthetic/cost-cap-usd-per-batch
+    volumes:
+      - ${HOME}/.aws:/home/runtime/.aws:ro
+    networks:
+      - runtime
+    depends_on:
+      - fastapi
+
+networks:
+  runtime:
+    driver: bridge
+
+volumes:
+  event-drop:
