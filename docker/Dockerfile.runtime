@@ -44,7 +44,9 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # --- Non-root user for the runtime
-RUN useradd --create-home --shell /bin/bash --uid 1000 runtime
+RUN useradd --create-home --shell /bin/bash --uid 1000 runtime && \
+    mkdir -p /var/run/vektor-guard/events && \
+    chown -R runtime:runtime /var/run/vektor-guard
 USER runtime
 WORKDIR /home/runtime
 

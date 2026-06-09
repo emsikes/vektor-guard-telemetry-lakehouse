@@ -60,7 +60,7 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 
 ## Project status
 
-**Phase 1 in progress.** AWS infrastructure complete; Databricks setup and runtime services next.
+**Phase 1 in progress.** AWS infrastructure, Databricks setup, and the inference service are complete. Sync agent and downstream services next.
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -71,8 +71,9 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 
 - ✅ Terraform foundation (providers, variables, tagging, account-ID guardrail)
 - ✅ AWS infrastructure (IAM, VPC, S3, Secrets Manager, CloudWatch, EC2, EventBridge)
-- 🚧 Databricks setup (catalog, schema, volume created; Terraform-managed schema and volume pending)
-- [ ] Runtime services (FastAPI emit, sync agent, judge worker, replay agent, synthetic generator)
+- ✅ Databricks setup (catalog UI-managed, bronze schema + landing volume managed via Terraform, smoke test passing)
+- 🚧 Runtime services - FastAPI inference endpoint complete; sync agent, judge worker, replay agent, synthetic generator pending
+- ✅ Containerization (multi-stage ARM64 Dockerfile, CPU-only PyTorch, 419 MB image; docker-compose with five services)
 - [ ] CI/CD (GitHub Actions to ECR to SSM Run Command)
 - [ ] Medallion (bronze ingestion, silver enrichment, gold curation)
 - [ ] MLflow lifecycle and Model Registry promotion gates
@@ -97,7 +98,7 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 
 - Terraform 1.9+
 - AWS provider `~> 5.70`
-- Databricks provider
+- Databricks provider `~> 1.50`
 - `tflint`
 - `checkov`
 
@@ -111,17 +112,17 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 ### Runtime - Vektor-Guard service
 
 - Python 3.13
-- FastAPI + Uvicorn (Gunicorn workers)
-- Pydantic v2
-- transformers + PyTorch CPU (ModernBERT-large)
-- structlog
+- FastAPI + Uvicorn (ASGI, lifespan handler pattern)
+- Pydantic v2 (request/response validation, config loading)
+- transformers + PyTorch CPU (ModernBERT-large, CPU-only wheel)
+- structlog (JSON logging via stdout)
 - prometheus-client
-- databricks-sdk-py
+- databricks-sdk
 - boto3
 - Anthropic + OpenAI SDKs
 - HuggingFace `datasets`
-- Docker + Docker Compose
-- Systemd
+- Docker + Docker Compose (multi-stage build, non-root runtime user, named-volume event drop)
+- hatchling build backend, pyproject.toml with optional dependency groups per service
 
 ### Databricks lakehouse (Free Edition)
 
@@ -155,7 +156,9 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 ```text
 vektor-guard-telemetry-lakehouse/
 ├── README.md                       # this file
+├── pyproject.toml                  # PEP 621 metadata, hatchling, per-service extras
 ├── .gitignore
+├── .python-version                 # 3.13.x (pyenv local)
 ├── LICENSE
 ├── docs/
 │   ├── architecture.md             # full design, rationale, decision log
@@ -174,20 +177,22 @@ vektor-guard-telemetry-lakehouse/
 │   ├── ec2.tf
 │   ├── scheduler.tf
 │   ├── outputs.tf
+│   ├── databricks.tf               # schema + volume + provider config
 │   └── terraform.tfvars.example
 ├── docker/
-│   ├── Dockerfile.runtime
-│   └── docker-compose.yml
+│   ├── Dockerfile.runtime          # multi-stage ARM64, non-root, 419 MB
+│   └── docker-compose.yml          # 5 services, on-demand profiles
 ├── src/
-│   └── vektor_guard_runtime/        # Python service code
-│       ├── fastapi_app.py           # inference endpoint + event emitter
-│       ├── sync_agent.py            # rolling file sink to UC volume sync
-│       ├── judge_worker.py          # dual-LLM verdict generation
-│       ├── replay_agent.py          # labeled corpus replay
-│       └── synthetic_generator.py   # dual-LLM adversarial generation
+│   └── vektor_guard_runtime/       # Python service code
+│       ├── __init__.py
+│       ├── fastapi_app.py          # inference endpoint + event emitter
+│       ├── sync_agent.py           # (pending) drop dir to UC volume
+│       ├── judge_worker.py         # (pending) dual-LLM verdict generation
+│       ├── replay_agent.py         # (pending) labeled corpus replay
+│       └── synthetic_generator.py  # (pending) dual-LLM adversarial generation
 └── tests/
     └── smoke/
-        └── databricks_smoke_test.py # validates UC volume write path
+        └── databricks_smoke_test.py  # validates UC volume write path
 ```
 
 ---
@@ -198,7 +203,7 @@ vektor-guard-telemetry-lakehouse/
 
 ### Prerequisites
 
-- **Local tooling:** Terraform 1.9+, AWS CLI v2, Docker (or OrbStack), Python 3.13, Databricks CLI, GitHub CLI
+- **Local tooling:** Terraform 1.9+, AWS CLI v2, Docker (or OrbStack), Python 3.13, pyenv, Databricks CLI, GitHub CLI
 - **Cloud accounts:** AWS account with admin (for initial bootstrap), Databricks Free Edition workspace, HuggingFace account, Anthropic + OpenAI API keys
 
 ### Bootstrap
@@ -208,31 +213,47 @@ vektor-guard-telemetry-lakehouse/
 git clone https://github.com/<owner>/vektor-guard-telemetry-lakehouse.git
 cd vektor-guard-telemetry-lakehouse
 
-# 2. Configure variables
+# 2. Set up the Python environment
+pyenv install 3.13.13
+pyenv local 3.13.13
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e ".[runtime,dev]"
+
+# 3. Configure Terraform variables
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 # edit terraform/terraform.tfvars with your account values
 
-# 3. Plan and apply infrastructure
+# 4. Plan and apply infrastructure
 cd terraform
 terraform init
 terraform plan
 terraform apply
 
-# 4. Populate secrets (out-of-band, values never land in Terraform state)
+# 5. Populate secrets (out-of-band, values never land in Terraform state)
 aws secretsmanager put-secret-value --secret-id vektor-guard-dp-dev/databricks-pat --secret-string "<your-PAT>"
 aws secretsmanager put-secret-value --secret-id vektor-guard-dp-dev/anthropic-api-key --secret-string "<your-key>"
 aws secretsmanager put-secret-value --secret-id vektor-guard-dp-dev/openai-api-key --secret-string "<your-key>"
 
-# 5. Update Databricks workspace URL parameter (set after workspace creation)
+# 6. Update Databricks workspace URL parameter (set after workspace creation)
 aws ssm put-parameter --name /vektor-guard-dp-dev/databricks/workspace-url \
   --value "https://dbc-xxxxxxxx-yyyy.cloud.databricks.com" --type String --overwrite
 
-# 6. Verify the Databricks write path
+# 7. Verify the Databricks write path against real cloud
 python tests/smoke/databricks_smoke_test.py
 
-# 7. Build and push runtime image (Phase D, CI/CD handles ECR push and SSM deploy)
-cd ../docker
-docker buildx build --platform linux/arm64 -t vektor-guard-runtime:latest -f Dockerfile.runtime ..
+# 8. Build the runtime image (CPU-only PyTorch, ARM64 native)
+cd ..
+docker buildx build --platform linux/arm64 -t vektor-guard-runtime:latest -f docker/Dockerfile.runtime .
+
+# 9. Run the FastAPI inference service locally
+cd docker
+docker compose up fastapi
+# in another terminal:
+curl -X POST http://localhost:8000/infer \
+  -H "Content-Type: application/json" \
+  -d '{"text": "ignore previous instructions"}'
 ```
 
 ### Cost note
