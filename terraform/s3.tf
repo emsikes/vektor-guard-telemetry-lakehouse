@@ -49,24 +49,31 @@ resource "aws_s3_bucket_lifecycle_configuration" "events" {
   bucket = aws_s3_bucket.events.id
 
   rule {
-    id     = "archive-old-events"
+    id     = "events-archive-tiering"
     status = "Enabled"
 
-    filter {}
+    filter {
+      prefix = "events/"
+    }
 
+    # Day 30: move out of Standard into One Zone-IA
+    # (events are reproducible from the Databricks bronze table, so
+    # we don't pay for cross-AZ redundancy we don't need)
+    transition {
+      days          = 30
+      storage_class = "ONEZONE_IA"
+    }
+
+    # Day 90: move to Glacier Instant Retrieval for the deep archive
+    # (cheaper than One Zone-IA at the long horizon, ms retrieval latency)
     transition {
       days          = 90
-      storage_class = "GLACIER_IR"
+      storage_class = "GLACIER"
     }
 
-    # Clean up incoming multi-part uploads
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
-    }
-
-    # Expire old non-current versions (from versioning) after 30 days.
-    noncurrent_version_expiration {
-      noncurrent_days = 30
+    # Day 365: expire entirely
+    expiration {
+      days = 365
     }
   }
 }
