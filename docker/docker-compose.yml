@@ -30,25 +30,31 @@ services:
       - runtime
 
   sync:
-    image: vektor-guard-runtime:latest
-    container_name: vektor-guard-sync
-    command: ["vektor-guard-sync"]
-    restart: unless-stopped
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      AWS_REGION: ${AWS_REGION:-us-west-2}
-      AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
-      EVENT_DROP_DIR: /var/run/vektor-guard/events
-      DATABRICKS_VOLUME_PATH: /Volumes/vektor_guard_dp/bronze/landing
-      DATABRICKS_PAT_SECRET_ID: vektor-guard-dp-dev/databricks-pat
-      DATABRICKS_WORKSPACE_URL_PARAM: /vektor-guard-dp-dev/databricks/workspace-url
-    volumes:
-      - event-drop:/var/run/vektor-guard/events
-      - ${HOME}/.aws:/home/runtime/.aws:ro
-    networks:
-      - runtime
-    depends_on:
-      - fastapi
+      image: vektor-guard-runtime:latest
+      container_name: vektor-guard-sync
+      command: vektor-guard-sync
+      environment:
+        AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+        AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+        AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+        LOG_LEVEL: INFO
+        AWS_REGION: us-west-2
+        EVENT_DROP_DIR: /var/run/vektor-guard/events
+        SHIPPED_DIR: /var/run/vektor-guard/shipped
+        FAILED_DIR: /var/run/vektor-guard/failed
+        LOCAL_TTL_HOURS: "24"
+        S3_BUCKET: vektor-guard-dp-dev-events
+        S3_PREFIX: events/
+        DATABRICKS_VOLUME_PATH: /Volumes/vektor_guard_dp/bronze/landing
+        DATABRICKS_PAT_SECRET_ID: vektor-guard-dp-dev/databricks-pat
+        DATABRICKS_WORKSPACE_URL_PARAM: /vektor-guard-dp-dev/databricks/workspace-url
+        SWEEPER_INTERVAL_SECONDS: "300"
+        MAX_UPLOAD_RETRIES: "3"
+        USE_POLLING_OBSERVER: "true"
+      volumes:
+        - event-drop:/var/run/vektor-guard/events
+        - ${HOME}/.aws:/home/runtime/.aws:ro
+      restart: unless-stopped
 
   judge:
     image: vektor-guard-runtime:latest
