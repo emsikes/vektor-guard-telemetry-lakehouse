@@ -38,7 +38,7 @@ Two-phase build. Phase 1 ships a working end-to-end pipeline on a single EC2 ins
   <img src="docs/img/variant1_ec2_only.png" alt="Phase 1 architecture - Variant 1 EC2-only" width="800">
 </p>
 
-The lakehouse is fed by two complementary event sources: deterministic replay of a labeled corpus for validation, and live LLM-driven synthetic generation for variety and load. Both feed the same FastAPI endpoint with provenance tagging that flows through to the bronze layer.
+The lakehouse is fed by three event sources, all flowing through the same FastAPI endpoint with provenance tagging that carries into the bronze layer: live inference traffic, deterministic replay of a labeled corpus for validation, and LLM-driven synthetic generation for variety and load.
 
 The lakehouse serves two consumption paths:
 
@@ -60,7 +60,7 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 
 ## Project status
 
-**Phase 1 in progress.** AWS infrastructure, Databricks setup, and the inference service are complete. Sync agent and downstream services next.
+**Phase 1 in progress.** AWS infrastructure, Databricks setup, the inference service, and the sync agent are complete and end-to-end verified. Replay agent, judge worker, and synthetic generator next.
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -72,7 +72,7 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 - ✅ Terraform foundation (providers, variables, tagging, account-ID guardrail)
 - ✅ AWS infrastructure (IAM, VPC, S3, Secrets Manager, CloudWatch, EC2, EventBridge)
 - ✅ Databricks setup (catalog UI-managed, bronze schema + landing volume managed via Terraform, smoke test passing)
-- 🚧 Runtime services - FastAPI inference endpoint complete; sync agent, judge worker, replay agent, synthetic generator pending
+- 🚧 Runtime services - FastAPI inference endpoint and sync agent complete and end-to-end verified (FastAPI to drop dir to Databricks landing volume to local hot tier to S3 sweeper); replay agent, judge worker, synthetic generator pending
 - ✅ Containerization (multi-stage ARM64 Dockerfile, CPU-only PyTorch, 419 MB image; docker-compose with five services)
 - [ ] CI/CD (GitHub Actions to ECR to SSM Run Command)
 - [ ] Medallion (bronze ingestion, silver enrichment, gold curation)
@@ -87,7 +87,7 @@ Full architecture, design rationale, and decision log: **[docs/architecture.md](
 
 - EC2 `t4g.large` (Graviton2, ARM64)
 - IAM (least-privilege instance profile, account-ID guardrail)
-- S3 (event archive, TLS-only, Glacier IR lifecycle)
+- S3 (event archive, TLS-only, events/ lifecycle: Standard to One Zone-IA to Glacier Flexible to expire at 365d)
 - Secrets Manager
 - SSM Parameter Store
 - CloudWatch Logs (split per workload, 14-day retention)
@@ -186,9 +186,9 @@ vektor-guard-telemetry-lakehouse/
 │   └── vektor_guard_runtime/       # Python service code
 │       ├── __init__.py
 │       ├── fastapi_app.py          # inference endpoint + event emitter
-│       ├── sync_agent.py           # (pending) drop dir to UC volume
-│       ├── judge_worker.py         # (pending) dual-LLM verdict generation
+│       ├── sync_agent.py           # drop dir to UC volume, tiered archive, S3 sweeper
 │       ├── replay_agent.py         # (pending) labeled corpus replay
+│       ├── judge_worker.py         # (pending) dual-LLM verdict generation
 │       └── synthetic_generator.py  # (pending) dual-LLM adversarial generation
 └── tests/
     └── smoke/
@@ -247,13 +247,16 @@ python tests/smoke/databricks_smoke_test.py
 cd ..
 docker buildx build --platform linux/arm64 -t vektor-guard-runtime:latest -f docker/Dockerfile.runtime .
 
-# 9. Run the FastAPI inference service locally
+# 9. Run the inference service and sync agent locally
 cd docker
-docker compose up fastapi
-# in another terminal:
+docker compose up fastapi sync
+# in another terminal, POST an event:
 curl -X POST http://localhost:8000/infer \
   -H "Content-Type: application/json" \
   -d '{"text": "ignore previous instructions"}'
+# the sync agent picks up the dropped event, ships it to the Databricks
+# landing volume, archives a gzipped copy to the local hot tier, and the
+# background sweeper migrates aged files to S3
 ```
 
 ### Cost note
