@@ -32,13 +32,12 @@ services:
   sync:
       image: vektor-guard-runtime:latest
       container_name: vektor-guard-sync
-      command: vektor-guard-sync
+      command: ["vektor-guard-sync"]
+      restart: unless-stopped
       environment:
-        AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-        AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-        AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
-        LOG_LEVEL: INFO
-        AWS_REGION: us-west-2
+        LOG_LEVEL: ${LOG_LEVEL:-INFO}
+        AWS_REGION: ${AWS_REGION:-us-west-2}
+        AWS_PROFILE: ${AWS_PROFILE:-vektor-research}
         EVENT_DROP_DIR: /var/run/vektor-guard/events
         SHIPPED_DIR: /var/run/vektor-guard/shipped
         FAILED_DIR: /var/run/vektor-guard/failed
@@ -54,7 +53,10 @@ services:
       volumes:
         - event-drop:/var/run/vektor-guard/events
         - ${HOME}/.aws:/home/runtime/.aws:ro
-      restart: unless-stopped
+      networks:
+        - runtime
+      depends_on:
+        - fastapi
 
   judge:
     image: vektor-guard-runtime:latest

@@ -22,6 +22,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from io import BytesIO
 
 import boto3
 import structlog
@@ -162,7 +163,7 @@ def capture_failure(event_path: Path, failed_dir: Path, error: Exception) -> Pat
         "error_message": str(error),
     }
 
-    os.replace(event_path, final_path)
+    shutil.move(str(event_path), str(final_path))
 
     tmp_sidecar = sidecar_path.with_suffix(".failure.tmp")
     tmp_sidecar.write_text(json.dumps(metadata, indent=2))
@@ -224,7 +225,7 @@ class EventHandler(FileSystemEventHandler):
             try:
                 self.databricks.files.upload(
                     file_path=target,
-                    contents=payload,
+                    contents=BytesIO(payload),
                     overwrite=True,
                 )
                 return
